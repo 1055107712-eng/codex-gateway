@@ -100,7 +100,7 @@ final class GatewayServer {
       return
     }
 
-    let requestedModel = body["model"] as? String ?? ""
+    let requestedModel = ModelCatalog.requestedModelID(from: body)
     let sessionId = request.headers["x-session-id"] ?? body["client_metadata"] as? String
 
     if ModelCatalog.shared.isCustomModel(requestedModel),
@@ -109,6 +109,9 @@ final class GatewayServer {
       return
     }
 
+    if requestedModel.contains("/") {
+      GatewayLog.error("Unknown custom-looking model \(requestedModel); passing through")
+    }
     passthroughResponses(request: request, body: body, response: response)
   }
 
@@ -286,15 +289,25 @@ final class GatewayServer {
         }
       }
       state.start(write: write)
-      for line in text.components(separatedBy: "\n") {
-        guard line.hasPrefix("data: "), line != "data: [DONE]" else { continue }
-        let jsonStr = String(line.dropFirst(6))
-        guard let d = jsonStr.data(using: .utf8),
-              let chunk = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { continue }
-        state.writeChatDelta(chunk, write: write)
+      let sseLines = text.components(separatedBy: "\n").filter { $0.hasPrefix("data: ") && $0 != "data: [DONE]" }
+      if sseLines.isEmpty,
+         let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+         payload["choices"] != nil {
+        state.writeChatDelta(payload, write: write)
+      } else {
+        for line in text.components(separatedBy: "\n") {
+          guard line.hasPrefix("data: "), line != "data: [DONE]" else { continue }
+          let jsonStr = String(line.dropFirst(6))
+          guard let d = jsonStr.data(using: .utf8),
+                let chunk = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { continue }
+          state.writeChatDelta(chunk, write: write)
+        }
       }
       state.finish(write: write)
       let body = events.reduce(into: Data()) { $0.append($1) }
+      if body.isEmpty {
+        GatewayLog.error("Third-party stream \(requestedModel) produced no Responses events")
+      }
       response.send(status: 200, headers: [
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
@@ -304,12 +317,18 @@ final class GatewayServer {
   }
 
   private func passthroughResponses(request: HTTPRequest, body: [String: Any], response: HTTPResponse) {
-    let isChatGPT = request.headers.keys.contains(where: { $0.lowercased() == "chatgpt-account-id" })
+    let headerAccount = request.headers.first { $0.key.lowercased() == "chatgpt-account-id" }?.value
+    let backend = Self.passthroughBackend(
+      headerAccountID: headerAccount,
+      authAccountID: CodexConfig.loadChatGPTAccountID(),
+      authMode: CodexConfig.loadAuthMode()
+    )
     let subPath = request.path.hasPrefix("/v1/") ? String(request.path.dropFirst(4)) : request.path
     let target: URL
-    if isChatGPT {
+    switch backend {
+    case .chatGPT:
       target = URL(string: "https://chatgpt.com/backend-api/codex/\(subPath)")!
-    } else {
+    case .openAI:
       target = URL(string: "https://api.openai.com\(request.path)")!
     }
 
@@ -318,9 +337,22 @@ final class GatewayServer {
     for (k, v) in request.forwardHeaders {
       urlRequest.setValue(v, forHTTPHeaderField: k)
     }
-    if let token = CodexConfig.loadAuthToken(), urlRequest.value(forHTTPHeaderField: "Authorization") == nil {
-      urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    if case .chatGPT(let accountID) = backend,
+       urlRequest.value(forHTTPHeaderField: "chatgpt-account-id") == nil {
+      urlRequest.setValue(accountID, forHTTPHeaderField: "chatgpt-account-id")
     }
+    // Codex writes experimental_bearer_token = "dummy" so it will call the local
+    // gateway. Replace that placeholder (or a missing header) with the ChatGPT
+    // token from ~/.codex/auth.json. Never forward dummy/not-used — setValue(nil)
+    // removes the header. URLSession uses the macOS trust store — works with a
+    // Zscaler root in Keychain and with public CAs when Zscaler is not installed.
+    urlRequest.setValue(
+      Self.passthroughAuthorization(
+        existing: urlRequest.value(forHTTPHeaderField: "Authorization"),
+        chatgptToken: CodexConfig.loadAuthToken()
+      ),
+      forHTTPHeaderField: "Authorization"
+    )
     urlRequest.httpBody = request.body
 
     URLSession.shared.dataTask(with: urlRequest) { data, urlResponse, error in
@@ -332,9 +364,10 @@ final class GatewayServer {
       let status = http?.statusCode ?? 200
       if status >= 400 {
         let preview = String(data: data.prefix(200), encoding: .utf8) ?? "<binary>"
+        let model = ModelCatalog.requestedModelID(from: body)
         GatewayLog.error(
-          "Pass-through \(request.method) \(request.path) -> \(target.absoluteString) " +
-          "status=\(status) ce=\(request.headers["content-encoding"] ?? "-") preview=\(preview)"
+          "Pass-through \(request.method) \(request.path) model=\(model.isEmpty ? "<missing>" : model) " +
+          "-> \(target.absoluteString) status=\(status) ce=\(request.headers["content-encoding"] ?? "-") preview=\(preview)"
         )
       }
       var headers: [String: String] = [:]
@@ -352,7 +385,7 @@ final class GatewayServer {
       json(response, ["error": "Invalid JSON"], status: 400)
       return
     }
-    let model = body["model"] as? String ?? ""
+    let model = ModelCatalog.requestedModelID(from: body)
     if let resolved = ModelCatalog.shared.resolveUpstream(slug: model) {
       var chat = body
       chat["model"] = resolved.upstreamModel
@@ -448,6 +481,62 @@ final class GatewayServer {
     }
     guard let object = try? JSONSerialization.jsonObject(with: bytes) else { return nil }
     return object as? [String: Any]
+  }
+
+  /// Native GPT goes to ChatGPT's Codex backend when the desktop app (or auth.json)
+  /// has a ChatGPT account id. A ChatGPT OAuth token against api.openai.com returns
+  /// 401 `api.responses.write` and Codex stores an empty assistant turn.
+  enum PassthroughBackend: Equatable {
+    case chatGPT(accountID: String)
+    case openAI
+  }
+
+  static func passthroughBackend(
+    headerAccountID: String?,
+    authAccountID: String?,
+    authMode: String?
+  ) -> PassthroughBackend {
+    let header = headerAccountID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    if !header.isEmpty { return .chatGPT(accountID: header) }
+    let auth = authAccountID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    if (authMode ?? "").lowercased() == "chatgpt", !auth.isEmpty {
+      return .chatGPT(accountID: auth)
+    }
+    return .openAI
+  }
+
+  /// Placeholder tokens Codex (or other clients) send so the local gateway accepts
+  /// the request. Native pass-through must not forward these to OpenAI.
+  static let placeholderBearerTokens: Set<String> = [
+    "dummy", "not-used", "not-needed", "none", "placeholder"
+  ]
+
+  static func isPlaceholderAuthorization(_ value: String?) -> Bool {
+    guard let raw = value?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+      return true
+    }
+    let lowered = raw.lowercased()
+    let token: String
+    if lowered == "bearer" {
+      token = ""
+    } else if lowered.hasPrefix("bearer ") {
+      token = String(raw.dropFirst(7)).trimmingCharacters(in: .whitespacesAndNewlines)
+    } else {
+      token = raw
+    }
+    if token.isEmpty { return true }
+    return placeholderBearerTokens.contains(token.lowercased())
+  }
+
+  /// Prefer a real ChatGPT token from `auth.json` when the client sent a dummy
+  /// (or omitted) Authorization. Placeholders without a replacement are dropped
+  /// (`nil`) so they are never forwarded upstream. Leave a real header untouched.
+  static func passthroughAuthorization(existing: String?, chatgptToken: String?) -> String? {
+    let chatgpt = chatgptToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    if isPlaceholderAuthorization(existing) {
+      return chatgpt.isEmpty ? nil : "Bearer \(chatgpt)"
+    }
+    return existing
   }
 
   /// Builds an OpenAI-style error payload so upstream provider failures (4xx/5xx)

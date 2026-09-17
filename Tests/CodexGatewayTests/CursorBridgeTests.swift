@@ -92,6 +92,13 @@ final class CursorBridgeTests: XCTestCase {
       wellKnown
     )
     XCTAssertEqual(CursorBridge.NodeTLS.overrideKey, "CODEXGATEWAY_NODE_EXTRA_CA_CERTS")
+    XCTAssertNil(
+      CursorBridge.NodeTLS.resolvedExtraCACertsPath(
+        environment: [:],
+        home: "/Users/demo",
+        fileExists: { _ in false }
+      )
+    )
   }
 
   func testValidationResultExitCodes() {

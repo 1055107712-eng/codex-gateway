@@ -165,6 +165,16 @@ final class CodexConfigTests: XCTestCase {
         XCTAssertTrue(CodexConfig.signedIn(fromAuthData: Data(apiKey.utf8)))
     }
 
+    func testChatGPTAccountIDFromAuthData() {
+        XCTAssertNil(CodexConfig.chatGPTAccountID(fromAuthData: nil))
+        XCTAssertNil(CodexConfig.chatGPTAccountID(fromAuthData: Data(#"{ "auth_mode": "chatgpt" }"#.utf8)))
+        XCTAssertNil(CodexConfig.chatGPTAccountID(fromAuthData: Data(#"{ "tokens": { "account_id": "  " } }"#.utf8)))
+        XCTAssertEqual(
+            CodexConfig.chatGPTAccountID(fromAuthData: Data(#"{ "tokens": { "account_id": "acct-1" } }"#.utf8)),
+            "acct-1"
+        )
+    }
+
     func testEnsureConfigFileCreatesMissingFile() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("codexgateway-ensure-\(UUID().uuidString)")

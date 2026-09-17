@@ -410,6 +410,96 @@ final class ModelCatalogTests: XCTestCase {
         )
     }
 
+    func testRequestedModelIDReadsStringObjectAndModelID() {
+        XCTAssertEqual(ModelCatalog.requestedModelID(from: ["model": "openrouter/minimax-m2.5"]), "openrouter/minimax-m2.5")
+        XCTAssertEqual(ModelCatalog.requestedModelID(from: ["model": "  minimax-m2.5  "]), "minimax-m2.5")
+        XCTAssertEqual(
+            ModelCatalog.requestedModelID(from: ["model": ["id": "minimax-m2.5", "name": "OpenRouter MiniMax"]]),
+            "minimax-m2.5"
+        )
+        XCTAssertEqual(
+            ModelCatalog.requestedModelID(from: ["model": ["slug": "openrouter/minimax-m2.5"]]),
+            "openrouter/minimax-m2.5"
+        )
+        XCTAssertEqual(ModelCatalog.requestedModelID(from: ["model_id": "minimax-m2.5"]), "minimax-m2.5")
+        XCTAssertEqual(ModelCatalog.requestedModelID(from: [:]), "")
+        XCTAssertEqual(ModelCatalog.requestedModelID(from: ["model": "   "]), "")
+    }
+
+    func testFindModelMatchesExactSlugThenUniqueUnprefixedId() {
+        let routed = CatalogModel(
+            slug: "openrouter/minimax-m2.5",
+            model: "minimax-m2.5",
+            provider: "openrouter",
+            backend_provider: "openrouter",
+            display_name: "OpenRouter MiniMax M2.5",
+            visibility: "list",
+            input_modalities: nil,
+            vision_bridge_enabled: nil,
+            context_window: nil
+        )
+        let claudeAPI = CatalogModel(
+            slug: "anthropic/claude-sonnet-5",
+            model: "claude-sonnet-5",
+            provider: "anthropic",
+            backend_provider: "anthropic",
+            display_name: "Anthropic Claude Sonnet 5 (API)",
+            visibility: "list",
+            input_modalities: nil,
+            vision_bridge_enabled: nil,
+            context_window: nil
+        )
+        let claudeOAuth = CatalogModel(
+            slug: "claude-code/claude-sonnet-5",
+            model: "claude-sonnet-5",
+            provider: "claude-code",
+            backend_provider: "claude-code",
+            display_name: "Anthropic Claude Sonnet 5 (OAuth)",
+            visibility: "list",
+            input_modalities: nil,
+            vision_bridge_enabled: nil,
+            context_window: nil
+        )
+        let models = [routed, claudeAPI, claudeOAuth]
+
+        XCTAssertEqual(
+            ModelCatalog.findModel(requested: "openrouter/minimax-m2.5", in: models)?.slug,
+            "openrouter/minimax-m2.5"
+        )
+        XCTAssertEqual(
+            ModelCatalog.findModel(requested: "minimax-m2.5", in: models)?.slug,
+            "openrouter/minimax-m2.5"
+        )
+        XCTAssertNil(ModelCatalog.findModel(requested: "claude-sonnet-5", in: models))
+        XCTAssertEqual(
+            ModelCatalog.findModel(requested: "anthropic/claude-sonnet-5", in: models)?.slug,
+            "anthropic/claude-sonnet-5"
+        )
+        XCTAssertNil(ModelCatalog.findModel(requested: "gpt-5.5", in: models))
+        XCTAssertNil(ModelCatalog.findModel(requested: "", in: models))
+        XCTAssertTrue(ModelCatalog.isNativeCodexSlug("gpt-5.5"))
+        XCTAssertFalse(ModelCatalog.isNativeCodexSlug("minimax-m2.5"))
+    }
+
+    func testFindModelDoesNotStealNativeSlugEvenIfCustomUpstreamMatches() {
+        let colliding = CatalogModel(
+            slug: "openrouter/gpt-5.5",
+            model: "gpt-5.5",
+            provider: "openrouter",
+            backend_provider: "openrouter",
+            display_name: "OpenRouter GPT 5.5",
+            visibility: "list",
+            input_modalities: nil,
+            vision_bridge_enabled: nil,
+            context_window: nil
+        )
+        XCTAssertNil(ModelCatalog.findModel(requested: "gpt-5.5", in: [colliding]))
+        XCTAssertEqual(
+            ModelCatalog.findModel(requested: "openrouter/gpt-5.5", in: [colliding])?.slug,
+            "openrouter/gpt-5.5"
+        )
+    }
+
     func testProviderHasInstalledModelsErrorDescription() {
         let error = ModelCatalogError.providerHasInstalledModels(name: "minimax", count: 2)
         XCTAssertEqual(
