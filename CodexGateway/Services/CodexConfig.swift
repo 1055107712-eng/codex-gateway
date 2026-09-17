@@ -200,13 +200,39 @@ enum CodexConfig {
   }
 
   static func loadAuthToken() -> String? {
-    guard let data = try? Data(contentsOf: URL(fileURLWithPath: Paths.codexAuth)),
-          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let tokens = json["tokens"] as? [String: Any],
+    guard let tokens = authJSON()?["tokens"] as? [String: Any],
           let token = tokens["access_token"] as? String else {
       return nil
     }
     return token
+  }
+
+  static func loadAuthMode() -> String? {
+    authJSON()?["auth_mode"] as? String
+  }
+
+  static func loadChatGPTAccountID() -> String? {
+    chatGPTAccountID(fromAuthData: try? Data(contentsOf: URL(fileURLWithPath: Paths.codexAuth)))
+  }
+
+  /// `tokens.account_id` from `~/.codex/auth.json` (ChatGPT sign-in).
+  static func chatGPTAccountID(fromAuthData data: Data?) -> String? {
+    guard let data,
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let tokens = json["tokens"] as? [String: Any],
+          let id = tokens["account_id"] as? String else {
+      return nil
+    }
+    let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+  }
+
+  private static func authJSON() -> [String: Any]? {
+    guard let data = try? Data(contentsOf: URL(fileURLWithPath: Paths.codexAuth)),
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+      return nil
+    }
+    return json
   }
 
   /// True when the user has signed in to Codex Desktop (ChatGPT token or API key

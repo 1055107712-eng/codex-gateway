@@ -154,4 +154,86 @@ final class TranslatorTests: XCTestCase {
         XCTAssertEqual(toolCall?["name"] as? String, "read_file")
         XCTAssertEqual(toolCall?["namespace"] as? String, "mcp_cursor")
     }
+
+    func testChatTextJoinsContentPartArrays() {
+        XCTAssertEqual(Translator.chatText("hello"), "hello")
+        XCTAssertEqual(
+            Translator.chatText([["type": "text", "text": "A"], ["type": "text", "text": "B"]]),
+            "AB"
+        )
+        XCTAssertEqual(Translator.chatText(nil), "")
+    }
+
+    func testResponsesStreamEmitsFunctionCallsWithoutEmptyMessage() {
+        let state = ResponsesStreamState(model: "openrouter/minimax-m2.5", namespaceMap: ["shell": "default"])
+        var events: [[String: Any]] = []
+        let write: ([String: Any]) -> Void = { events.append($0) }
+        state.start(write: write)
+        state.writeChatDelta([
+            "choices": [[
+                "delta": [
+                    "tool_calls": [[
+                        "index": 0,
+                        "id": "call_1",
+                        "function": ["name": "shell", "arguments": #"{"cmd":"ls"}"#]
+                    ]]
+                ]
+            ]]
+        ], write: write)
+        state.finish(write: write)
+
+        let types = events.compactMap { $0["type"] as? String }
+        XCTAssertTrue(types.contains("response.output_item.added"))
+        XCTAssertTrue(types.contains("response.function_call_arguments.delta"))
+        XCTAssertTrue(types.contains("response.output_item.done"))
+        XCTAssertTrue(types.contains("response.completed"))
+
+        let functionItems = events.compactMap { event -> [String: Any]? in
+            guard let item = event["item"] as? [String: Any],
+                  (item["type"] as? String) == "function_call" else { return nil }
+            return item
+        }
+        XCTAssertFalse(functionItems.isEmpty)
+        XCTAssertEqual(functionItems.last?["name"] as? String, "shell")
+        XCTAssertEqual(functionItems.last?["arguments"] as? String, #"{"cmd":"ls"}"#)
+        XCTAssertEqual(functionItems.last?["namespace"] as? String, "default")
+
+        let assistantMessages = events.compactMap { event -> [String: Any]? in
+            guard (event["type"] as? String) == "response.output_item.done",
+                  let item = event["item"] as? [String: Any],
+                  (item["type"] as? String) == "message" else { return nil }
+            return item
+        }
+        XCTAssertTrue(assistantMessages.isEmpty, "tool-only streams must not emit an empty assistant message")
+    }
+
+    func testResponsesStreamUsesReasoningWhenContentEmpty() {
+        let state = ResponsesStreamState(model: "m", namespaceMap: [:])
+        var events: [[String: Any]] = []
+        let write: ([String: Any]) -> Void = { events.append($0) }
+        state.start(write: write)
+        state.writeChatDelta([
+            "choices": [[
+                "delta": ["reasoning_content": "The project is a menu-bar gateway."]
+            ]]
+        ], write: write)
+        state.finish(write: write)
+        let deltas = events.compactMap { $0["delta"] as? String }
+        XCTAssertTrue(deltas.contains("The project is a menu-bar gateway."))
+    }
+
+    func testResponsesStreamAcceptsFullMessageChunk() {
+        let state = ResponsesStreamState(model: "m", namespaceMap: [:])
+        var events: [[String: Any]] = []
+        let write: ([String: Any]) -> Void = { events.append($0) }
+        state.start(write: write)
+        state.writeChatDelta([
+            "choices": [[
+                "message": ["content": "pong"]
+            ]]
+        ], write: write)
+        state.finish(write: write)
+        let deltas = events.compactMap { $0["delta"] as? String }
+        XCTAssertTrue(deltas.contains("pong"))
+    }
 }

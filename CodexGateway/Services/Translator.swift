@@ -80,7 +80,7 @@ enum Translator {
       ])
     }
 
-    let text = stripThink(message["content"] as? String ?? "")
+    let text = stripThink(chatText(message["content"]))
     if !text.isEmpty {
       output.append([
         "id": "msg_0", "type": "message", "status": "completed", "role": "assistant",
@@ -120,6 +120,18 @@ enum Translator {
       "output": output,
       "usage": payload["usage"] as Any
     ]
+  }
+
+  /// String or OpenAI content-part array (`[{type,text}]`) → joined text.
+  static func chatText(_ value: Any?) -> String {
+    if let s = value as? String { return s }
+    if let arr = value as? [[String: Any]] {
+      return arr.compactMap { part -> String? in
+        if let text = part["text"] as? String { return text }
+        return nil
+      }.joined()
+    }
+    return ""
   }
 
   private static func contentToText(_ value: Any?) -> String {
@@ -224,6 +236,7 @@ final class ResponsesStreamState {
   private let model: String
   private let namespaceMap: [String: String]
   private var messageText = ""
+  private var reasoningText = ""
   private var messageOpened = false
   private var messageClosed = false
   private var sequence = 1
@@ -246,31 +259,57 @@ final class ResponsesStreamState {
   func writeChatDelta(_ chunk: [String: Any], write: ([String: Any]) -> Void) {
     let choice = (chunk["choices"] as? [[String: Any]])?.first ?? [:]
     let delta = choice["delta"] as? [String: Any] ?? [:]
-    if let content = delta["content"] as? String, !content.isEmpty {
-      let filtered = Translator.stripThink(content)
-      if !filtered.isEmpty {
-        if !messageOpened { openMessage(write: write) }
-        messageText += filtered
-        onTextChunk?(filtered)
-        write(wrap([
-          "type": "response.output_text.delta",
-          "item_id": messageItemId,
-          "output_index": 0,
-          "content_index": 0,
-          "delta": filtered
-        ]))
-      }
+    let message = choice["message"] as? [String: Any] ?? [:]
+    appendVisible(Translator.chatText(delta["content"]), write: write)
+    appendVisible(Translator.chatText(message["content"]), write: write)
+    reasoningText += Translator.chatText(delta["reasoning_content"])
+    reasoningText += Translator.chatText(message["reasoning_content"])
+    ingestToolCalls(delta["tool_calls"] as? [[String: Any]] ?? [])
+    ingestToolCalls(message["tool_calls"] as? [[String: Any]] ?? [])
+  }
+
+  func finish(write: ([String: Any]) -> Void, usage: [String: Any]? = nil) {
+    let visible = Translator.stripThink(messageText)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    if visible.isEmpty, !reasoningText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      appendVisible(Translator.stripThink(reasoningText), write: write)
     }
-    for call in delta["tool_calls"] as? [[String: Any]] ?? [] {
-      let index = call["index"] as? Int ?? 0
+    let hasTools = toolCalls.values.contains { !((($0["name"] as? String) ?? "").isEmpty) }
+    if messageOpened || !hasTools {
+      if !messageOpened { openMessage(write: write) }
+      if messageOpened && !messageClosed { closeMessage(write: write) }
+    }
+    emitToolCalls(write: write)
+    onTextDone?(Translator.stripThink(messageText))
+    let completed = response("completed", usage: usage)
+    write(wrap(["type": "response.completed", "response": completed]))
+    write(wrap(["type": "response.done", "response": completed]))
+  }
+
+  private func appendVisible(_ text: String, write: ([String: Any]) -> Void) {
+    guard !text.isEmpty else { return }
+    if !messageOpened { openMessage(write: write) }
+    messageText += text
+    onTextChunk?(text)
+    write(wrap([
+      "type": "response.output_text.delta",
+      "item_id": messageItemId,
+      "output_index": 0,
+      "content_index": 0,
+      "delta": text
+    ]))
+  }
+
+  private func ingestToolCalls(_ calls: [[String: Any]]) {
+    for call in calls {
+      let index = call["index"] as? Int ?? toolCalls.count
       var state = toolCalls[index] ?? [
         "id": call["id"] ?? "call_\(index)",
         "name": "",
         "arguments": "",
-        "added": false,
-        "closed": false,
         "output_index": toolCalls.count
       ]
+      if let id = call["id"] as? String, !id.isEmpty { state["id"] = id }
       if let fn = call["function"] as? [String: Any] {
         if let name = fn["name"] as? String { state["name"] = (state["name"] as? String ?? "") + name }
         if let args = fn["arguments"] as? String { state["arguments"] = (state["arguments"] as? String ?? "") + args }
@@ -279,13 +318,53 @@ final class ResponsesStreamState {
     }
   }
 
-  func finish(write: ([String: Any]) -> Void, usage: [String: Any]? = nil) {
-    if !messageOpened { openMessage(write: write) }
-    if messageOpened && !messageClosed { closeMessage(write: write) }
-    onTextDone?(messageText)
-    let completed = response("completed", usage: usage)
-    write(wrap(["type": "response.completed", "response": completed]))
-    write(wrap(["type": "response.done", "response": completed]))
+  private func emitToolCalls(write: ([String: Any]) -> Void) {
+    var outputIndex = messageOpened ? 1 : 0
+    for index in toolCalls.keys.sorted() {
+      guard let state = toolCalls[index] else { continue }
+      let name = state["name"] as? String ?? ""
+      guard !name.isEmpty else { continue }
+      let rawId = state["id"] as? String ?? "call_\(index)"
+      let args = state["arguments"] as? String ?? "{}"
+      let (flatName, namespace) = Translator.unflattenToolCall(name: name, namespaceMap: namespaceMap)
+      var item: [String: Any] = [
+        "id": rawId,
+        "type": "function_call",
+        "status": "completed",
+        "call_id": rawId,
+        "name": flatName,
+        "arguments": args
+      ]
+      if let namespace { item["namespace"] = namespace }
+      var added = item
+      added["status"] = "in_progress"
+      added["arguments"] = ""
+      write(wrap([
+        "type": "response.output_item.added",
+        "output_index": outputIndex,
+        "item": added
+      ]))
+      if !args.isEmpty {
+        write(wrap([
+          "type": "response.function_call_arguments.delta",
+          "item_id": rawId,
+          "output_index": outputIndex,
+          "delta": args
+        ]))
+        write(wrap([
+          "type": "response.function_call_arguments.done",
+          "item_id": rawId,
+          "output_index": outputIndex,
+          "arguments": args
+        ]))
+      }
+      write(wrap([
+        "type": "response.output_item.done",
+        "output_index": outputIndex,
+        "item": item
+      ]))
+      outputIndex += 1
+    }
   }
 
   private func openMessage(write: ([String: Any]) -> Void) {
@@ -304,7 +383,7 @@ final class ResponsesStreamState {
       "output_index": 0,
       "item": [
         "id": messageItemId, "type": "message", "status": "completed", "role": "assistant",
-        "content": [["type": "output_text", "text": messageText, "annotations": []]]
+        "content": [["type": "output_text", "text": Translator.stripThink(messageText), "annotations": []]]
       ]
     ]))
   }

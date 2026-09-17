@@ -178,6 +178,74 @@ final class LoopbackHTTPServerTests: XCTestCase {
         XCTAssertFalse(GatewayServer.shouldWaitOffHTTPQueueForCursorBridge(isRunning: true))
     }
 
+    func testPlaceholderAuthorizationDetectsDummyAndMissing() {
+        XCTAssertTrue(GatewayServer.isPlaceholderAuthorization(nil))
+        XCTAssertTrue(GatewayServer.isPlaceholderAuthorization(""))
+        XCTAssertTrue(GatewayServer.isPlaceholderAuthorization("Bearer"))
+        XCTAssertTrue(GatewayServer.isPlaceholderAuthorization("Bearer dummy"))
+        XCTAssertTrue(GatewayServer.isPlaceholderAuthorization("dummy"))
+        XCTAssertTrue(GatewayServer.isPlaceholderAuthorization("Bearer not-used"))
+        XCTAssertTrue(GatewayServer.isPlaceholderAuthorization("NOT-NEEDED"))
+        XCTAssertFalse(GatewayServer.isPlaceholderAuthorization("Bearer sk-live"))
+        XCTAssertFalse(GatewayServer.isPlaceholderAuthorization("sk-live"))
+    }
+
+    func testPassthroughAuthorizationReplacesDummyWithChatGPTToken() {
+        XCTAssertEqual(
+            GatewayServer.passthroughAuthorization(existing: "Bearer dummy", chatgptToken: "sk-chatgpt"),
+            "Bearer sk-chatgpt"
+        )
+        XCTAssertEqual(
+            GatewayServer.passthroughAuthorization(existing: nil, chatgptToken: "sk-chatgpt"),
+            "Bearer sk-chatgpt"
+        )
+        XCTAssertEqual(
+            GatewayServer.passthroughAuthorization(existing: "Bearer sk-client", chatgptToken: "sk-chatgpt"),
+            "Bearer sk-client"
+        )
+        XCTAssertEqual(
+            GatewayServer.passthroughAuthorization(existing: "Bearer dummy", chatgptToken: nil),
+            "Bearer dummy"
+        )
+        XCTAssertNil(GatewayServer.passthroughAuthorization(existing: nil, chatgptToken: nil))
+        XCTAssertNil(GatewayServer.passthroughAuthorization(existing: nil, chatgptToken: "  "))
+    }
+
+    func testPassthroughBackendPrefersChatGPTAccount() {
+        XCTAssertEqual(
+            GatewayServer.passthroughBackend(
+                headerAccountID: "hdr",
+                authAccountID: "auth",
+                authMode: "chatgpt"
+            ),
+            .chatGPT(accountID: "hdr")
+        )
+        XCTAssertEqual(
+            GatewayServer.passthroughBackend(
+                headerAccountID: nil,
+                authAccountID: "auth-id",
+                authMode: "chatgpt"
+            ),
+            .chatGPT(accountID: "auth-id")
+        )
+        XCTAssertEqual(
+            GatewayServer.passthroughBackend(
+                headerAccountID: nil,
+                authAccountID: "auth-id",
+                authMode: "apikey"
+            ),
+            .openAI
+        )
+        XCTAssertEqual(
+            GatewayServer.passthroughBackend(
+                headerAccountID: "  ",
+                authAccountID: nil,
+                authMode: "chatgpt"
+            ),
+            .openAI
+        )
+    }
+
     func testUpstreamErrorPayloadSurfacesStatusAndBody() {
         let payload = GatewayServer.upstreamErrorPayload(
             status: 404,

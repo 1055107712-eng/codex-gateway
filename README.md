@@ -27,7 +27,7 @@ Codex Desktop          Codex CLI
 ```
 
 - **Gateway** — a small embedded Swift HTTP server on `127.0.0.1:8765` (loopback only). Desktop and CLI are pointed at it via a managed block in `~/.codex/config.toml` (same config for both).
-- **Routing** — requests for your custom models are translated (OpenAI *Responses* ⇄ *Chat Completions*) and forwarded to the provider's API with your key; native models are passed through to OpenAI/ChatGPT unchanged.
+- **Routing** — requests for your custom models are translated (OpenAI *Responses* ⇄ *Chat Completions*) and forwarded to the provider's API with your key; native models are passed through to OpenAI/ChatGPT unchanged. Custom models match the catalog slug or a unique unprefixed id (so Codex Desktop can send `minimax-m2.5` for `openrouter/minimax-m2.5`). Pass-through replaces Codex's dummy bearer token with your ChatGPT login from `~/.codex/auth.json`. Outbound HTTPS uses the macOS trust store — works with Zscaler (corp root in Keychain) and without.
 - **Menu bar + Settings** — a status icon shows gateway health and port; Settings is where you add providers, pick models, and sync the catalog Codex Desktop/CLI read.
 
 ## Features
@@ -36,7 +36,7 @@ Codex Desktop          Codex CLI
 - **Cursor provider** — managed local OpenAI bridge (port `18788`) with dashboard API key; Fetch models from the sidecar, then add to the Codex catalog
 - **Custom provider examples** — Settings → **Add Provider** → Add custom provider includes a **Fill Spark example** for NVIDIA DGX Spark (`http://spark:8001/v1`)
 - **Shared model catalog** — Settings exports models into `~/.codex` so Desktop’s picker and the CLI both see them
-- **Native GPT pass-through** — official OpenAI / ChatGPT requests are untouched
+- **Native GPT pass-through** — official OpenAI / ChatGPT requests are forwarded unchanged, except a dummy `Authorization` from Codex's gateway provider is swapped for your ChatGPT token
 - **No Codex sign-in needed for local-only use** (e.g. Ollama); sign-in is only required for native GPT/ChatGPT
 - **First-run setup** — when the catalog is empty, a three-step window (choose provider → connect → pick models) writes Codex config and offers Restart Codex
 - **Menu bar status** with live gateway state + port; Cursor Bridge address appears on a second line only when the Cursor provider is installed; plus native Settings, Doctor, and About windows
@@ -90,6 +90,8 @@ Existing installs upgrade smoothly:
 If the gateway, Codex config, Node.js, Cursor, or Grok OAuth looks off, open **Doctor…** (⌘D) from the menu bar or the Settings toolbar.
 
 > **Custom models require you to be signed in to Codex** — a **free account is enough**. Signed out, Codex only shows its built-in fallback models and labels any active custom model as "Custom". (Native GPT/ChatGPT models still need an OpenAI/ChatGPT account.) When you have custom models but Codex is signed out, Settings shows a reminder.
+
+If Codex shows your prompt and then **nothing** (blank assistant turn), either the gateway forwarded a dummy bearer to OpenAI, dropped third-party **tool calls** from the Responses stream, or sent a ChatGPT login to `api.openai.com` instead of ChatGPT’s Codex backend. Restart CodexGateway after updating, then **Restart Codex**. Native GPT and custom models both work with or without Zscaler — the gateway uses the macOS trust store, not a pinned corporate certificate.
 
 ## Managing providers & models
 

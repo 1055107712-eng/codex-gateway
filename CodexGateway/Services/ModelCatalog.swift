@@ -170,7 +170,47 @@ final class ModelCatalog {
   }
 
   func findModel(slug: String) -> CatalogModel? {
-    loadCatalog().models.first { $0.slug == slug }
+    Self.findModel(requested: slug, in: loadCatalog().models)
+  }
+
+  /// Extracts a model id from a Responses / Chat Completions body.
+  /// New Codex Desktop may send `model` as a string, an object (`id`/`slug`/`model`),
+  /// or only `model_id`.
+  static func requestedModelID(from body: [String: Any]) -> String {
+    if let value = stringID(body["model"]) { return value }
+    if let object = body["model"] as? [String: Any] {
+      for key in ["id", "slug", "model"] {
+        if let value = stringID(object[key]) { return value }
+      }
+    }
+    return stringID(body["model_id"]) ?? ""
+  }
+
+  /// Exact catalog slug first; then a unique unprefixed match on upstream id or
+  /// `provider/model` suffix. Native Codex slugs (`gpt-5.5`, …) never match a
+  /// custom alias, so ChatGPT pass-through stays intact.
+  static func findModel(requested: String, in models: [CatalogModel]) -> CatalogModel? {
+    let needle = requested.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !needle.isEmpty else { return nil }
+    if let exact = models.first(where: { $0.slug == needle }) {
+      return exact
+    }
+    if isNativeCodexSlug(needle) { return nil }
+    let matches = models.filter { entry in
+      if let upstream = entry.model, upstream == needle { return true }
+      return entry.slug.hasSuffix("/\(needle)")
+    }
+    return matches.count == 1 ? matches[0] : nil
+  }
+
+  static func isNativeCodexSlug(_ slug: String) -> Bool {
+    nativeCodexModels.contains { $0.slug == slug }
+  }
+
+  private static func stringID(_ raw: Any?) -> String? {
+    guard let value = raw as? String else { return nil }
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
   }
 
   /// Upgrades custom model display names that are still raw ids (e.g. "composer-2.5",
