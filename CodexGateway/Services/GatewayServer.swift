@@ -343,15 +343,16 @@ final class GatewayServer {
     }
     // Codex writes experimental_bearer_token = "dummy" so it will call the local
     // gateway. Replace that placeholder (or a missing header) with the ChatGPT
-    // token from ~/.codex/auth.json. URLSession uses the macOS trust store —
-    // works with a Zscaler root in Keychain and with public CAs when Zscaler
-    // is not installed. Do not pin corporate PEMs here.
-    if let header = Self.passthroughAuthorization(
-      existing: urlRequest.value(forHTTPHeaderField: "Authorization"),
-      chatgptToken: CodexConfig.loadAuthToken()
-    ) {
-      urlRequest.setValue(header, forHTTPHeaderField: "Authorization")
-    }
+    // token from ~/.codex/auth.json. Never forward dummy/not-used — setValue(nil)
+    // removes the header. URLSession uses the macOS trust store — works with a
+    // Zscaler root in Keychain and with public CAs when Zscaler is not installed.
+    urlRequest.setValue(
+      Self.passthroughAuthorization(
+        existing: urlRequest.value(forHTTPHeaderField: "Authorization"),
+        chatgptToken: CodexConfig.loadAuthToken()
+      ),
+      forHTTPHeaderField: "Authorization"
+    )
     urlRequest.httpBody = request.body
 
     URLSession.shared.dataTask(with: urlRequest) { data, urlResponse, error in
@@ -528,11 +529,12 @@ final class GatewayServer {
   }
 
   /// Prefer a real ChatGPT token from `auth.json` when the client sent a dummy
-  /// (or omitted) Authorization. Leave a non-placeholder header untouched.
+  /// (or omitted) Authorization. Placeholders without a replacement are dropped
+  /// (`nil`) so they are never forwarded upstream. Leave a real header untouched.
   static func passthroughAuthorization(existing: String?, chatgptToken: String?) -> String? {
     let chatgpt = chatgptToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     if isPlaceholderAuthorization(existing) {
-      return chatgpt.isEmpty ? existing : "Bearer \(chatgpt)"
+      return chatgpt.isEmpty ? nil : "Bearer \(chatgpt)"
     }
     return existing
   }

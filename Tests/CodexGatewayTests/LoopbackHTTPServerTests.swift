@@ -203,10 +203,8 @@ final class LoopbackHTTPServerTests: XCTestCase {
             GatewayServer.passthroughAuthorization(existing: "Bearer sk-client", chatgptToken: "sk-chatgpt"),
             "Bearer sk-client"
         )
-        XCTAssertEqual(
-            GatewayServer.passthroughAuthorization(existing: "Bearer dummy", chatgptToken: nil),
-            "Bearer dummy"
-        )
+        XCTAssertNil(GatewayServer.passthroughAuthorization(existing: "Bearer dummy", chatgptToken: nil))
+        XCTAssertNil(GatewayServer.passthroughAuthorization(existing: "dummy", chatgptToken: "  "))
         XCTAssertNil(GatewayServer.passthroughAuthorization(existing: nil, chatgptToken: nil))
         XCTAssertNil(GatewayServer.passthroughAuthorization(existing: nil, chatgptToken: "  "))
     }
