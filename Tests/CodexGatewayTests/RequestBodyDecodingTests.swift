@@ -71,7 +71,10 @@ final class RequestBodyDecodingTests: XCTestCase {
 
   // 10. Decode failure → explicit "Request body decode failed".
   func testDecodeFailureReturnsRequestBodyDecodeFailed() {
-    guard let frame = ZstdTestSupport.compressUnknown(#"{"a":1}"#), frame.count > 16 else {
+    // Use a sufficiently large payload so the synthesized zstd frame comfortably
+    // exceeds the 16-byte sanitizer bound while still being a small valid crop.
+    let payload = String(repeating: "{\"a\":1} ", count: 40)
+    guard let frame = ZstdTestSupport.compressUnknown(payload), frame.count > 16 else {
       XCTFail("could not synthesize corrupt fixture")
       return
     }
