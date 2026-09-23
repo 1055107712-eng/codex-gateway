@@ -51,6 +51,10 @@ done
 echo "==> Building ${APP_NAME} macOS app..."
 echo "    bundle id: ${BUNDLE_ID}"
 
+# Recompute the bundle path after argument parsing, since --name may have
+# changed APP_NAME and APP_BUNDLE was initialized to the default name above.
+APP_BUNDLE="$DIST_DIR/${APP_NAME}.app"
+
 mkdir -p "$DIST_DIR"
 mkdir -p "$BUILD_DIR"
 
