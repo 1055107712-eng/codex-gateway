@@ -177,6 +177,7 @@ class StatusBarController: NSObject, NSMenuDelegate {
         }
     }
 
+    @MainActor
     private func rebuildMenu() {
         menu.removeAllItems()
         setupMenu()
