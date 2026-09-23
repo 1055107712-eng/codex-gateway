@@ -12,6 +12,7 @@ final class ModelRouteSettingsViewModelTests: XCTestCase {
   var tempDir: URL!
   var configURL: URL!
   var defaults: UserDefaults!
+  private var defaultsSuiteName: String = ""
 
   override func setUp() {
     super.setUp()
@@ -19,11 +20,14 @@ final class ModelRouteSettingsViewModelTests: XCTestCase {
       .appendingPathComponent("cg-vm-tests-\(UUID().uuidString)")
     try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
     configURL = tempDir.appendingPathComponent("config.toml")
-    defaults = UserDefaults(suiteName: "cg.vm.\(UUID().uuidString)")
+    defaultsSuiteName = "cg.vm.\(UUID().uuidString)"
+    defaults = UserDefaults(suiteName: defaultsSuiteName)
   }
 
   override func tearDown() {
-    if let suite = defaults.suiteName { defaults.removePersistentDomain(forName: suite) }
+    if !defaultsSuiteName.isEmpty {
+      defaults.removePersistentDomain(forName: defaultsSuiteName)
+    }
     try? FileManager.default.removeItem(at: tempDir)
     super.tearDown()
   }
