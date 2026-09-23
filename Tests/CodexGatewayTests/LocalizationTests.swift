@@ -110,7 +110,7 @@ final class LocalizationTests: XCTestCase {
 
   // MARK: 7–8 keys resolve in both languages
 
-  func testAllZHK keysHaveValues() {
+  func testAllZHKKeysHaveValues() {
     for key in L10nKey.allCases {
       let value = L10n.shared.resolve(rawKey: key.rawValue, language: "zh-Hans")
       XCTAssertFalse(value.isEmpty, "empty zh value for \(key.rawValue)")

@@ -83,7 +83,7 @@ final class LoopbackHTTPServerTests: XCTestCase {
         let gzipped = try XCTUnwrap(gzipData(json))
         let headers = ["content-encoding": "gzip"]
 
-        let decoded = HTTPBodyDecoder.decodeContentEncoding(gzipped, headers: headers)
+        let decoded = try XCTUnwrap(HTTPBodyDecoder.decodeContentEncoding(gzipped, headers: headers))
         XCTAssertEqual(String(data: decoded, encoding: .utf8), json)
     }
 
@@ -108,7 +108,7 @@ final class LoopbackHTTPServerTests: XCTestCase {
         XCTAssertEqual(process.terminationStatus, 0)
 
         let compressed = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        let decoded = HTTPBodyDecoder.decodeContentEncoding(compressed, headers: ["content-encoding": "zstd"])
+        let decoded = try XCTUnwrap(HTTPBodyDecoder.decodeContentEncoding(compressed, headers: ["content-encoding": "zstd"]))
         XCTAssertEqual(String(data: decoded, encoding: .utf8), json)
     }
 
@@ -162,7 +162,8 @@ final class LoopbackHTTPServerTests: XCTestCase {
                 "authorization": "Bearer token",
                 "chatgpt-account-id": "acct-123"
             ],
-            body: Data()
+            body: Data(),
+            decodeFailed: false
         )
 
         let forwarded = request.forwardHeaders
