@@ -46,6 +46,8 @@ struct SettingsView: View {
   @State private var isValidatingCursorKey = false
   @State private var cursorNodeProbe = CursorBridge.NodeRequirement.snapshot(binaryPath: nil, versionDisplay: "")
   @State private var cursorBridgeStatus = CursorBridgeRuntime.status
+  @StateObject private var modelRoute = ModelRouteSettingsViewModel()
+  @State private var routeSwitchTarget: ModelRouteStandard.Target?
 
   var body: some View {
     Form {
@@ -61,6 +63,7 @@ struct SettingsView: View {
       }
 
       signInHintSection
+      modelRouteSection
       addProviderSection
       providersSection
       modelsSection
@@ -136,6 +139,20 @@ struct SettingsView: View {
         ? "Removes CodexGateway's managed settings from Codex's own config so Codex returns to its native configuration, then restarts Codex. Your CodexGateway providers and models are not deleted."
         : "Writes your current CodexGateway providers and models into Codex's config, then restarts Codex.")
     }
+    .confirmationDialog(
+      routeSwitchTarget.map { "Switch model route?" } ?? "",
+      isPresented: routeSwitchConfirmBinding,
+      titleVisibility: .visible
+    ) {
+      Button("Switch") {
+        guard let target = routeSwitchTarget else { return }
+        Task { await performRouteSwitch(target) }
+      }
+      Button("Cancel", role: .cancel) { routeSwitchTarget = nil }
+    } message: {
+      Text(routeSwitchTarget.map(ModelRouteStandard.Strings.confirmSwitch) ?? "")
+    }
+    .task { await modelRoute.refresh() }
   }
 
   // MARK: - Toolbar & status
@@ -221,8 +238,234 @@ struct SettingsView: View {
     }
   }
 
+  // MARK: - Model Route
+
+  private var routeSwitchConfirmBinding: Binding<Bool> {
+    Binding(
+      get: { routeSwitchTarget != nil },
+      set: { if !$0 { routeSwitchTarget = nil } }
+    )
+  }
+
+  private func performRouteSwitch(_ target: ModelRouteStandard.Target) async {
+    switch target {
+    case .official: await modelRoute.switchToOfficial()
+    case .gateway: await modelRoute.switchToGateway()
+    }
+    routeSwitchTarget = nil
+  }
+
+  @ViewBuilder
+  private var modelRouteSection: some View {
+    Section {
+      VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 3) {
+          Text(ModelRouteStandard.Strings.sectionTitle)
+            .font(.headline)
+          Text(ModelRouteStandard.Strings.sectionSubtitle)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+
+        switch modelRoute.loadState {
+        case .loading:
+          HStack(spacing: 8) {
+            ProgressView()
+              .controlSize(.small)
+            Text(ModelRouteStandard.Strings.loading)
+              .font(.callout)
+              .foregroundStyle(.secondary)
+          }
+          .padding(.vertical, 4)
+
+        case .failed(let message):
+          routeStatusRow(title: ModelRouteStandard.Strings.currentRouteTitle,
+                         value: ModelRouteStandard.Strings.routeUnknown,
+                         badge: .unknown)
+          routeErrorBanner(message: message)
+
+        case .loaded(let snap):
+          routeStatusRow(
+            title: ModelRouteStandard.Strings.currentRouteTitle,
+            value: routeLabel(snap.route),
+            badge: snap.route
+          )
+          routeStatusRow(title: ModelRouteStandard.Strings.currentModelTitle,
+                         value: snap.model ?? "—")
+          routeStatusRow(title: ModelRouteStandard.Strings.modelProviderTitle,
+                         value: snap.modelProvider ?? "—")
+          routeStatusRow(title: ModelRouteStandard.Strings.gatewayAddressTitle,
+                         value: snap.gatewayAddress)
+          gatewayStatusRow(running: snap.gatewayRunning)
+
+          if let success = modelRoute.successMessage {
+            routeBanner(message: success, systemImage: "checkmark.circle.fill", color: .green) {
+              modelRoute.dismissSuccess()
+            }
+          }
+          if let error = modelRoute.errorMessage {
+            routeBanner(message: error, systemImage: "exclamationmark.triangle.fill", color: .red) {
+              modelRoute.dismissError()
+            }
+          }
+
+          Divider()
+
+          Picker(ModelRouteStandard.Strings.officialModelTitle,
+                 selection: $modelRoute.officialModel) {
+            Text(modelRoute.officialModel).tag(modelRoute.officialModel)
+          }
+          .onChange(of: modelRoute.officialModel) { _ in
+            modelRoute.persistOfficialModel()
+          }
+          .help(ModelRouteStandard.Strings.officialModelHelp)
+
+          switchButton
+
+          Button {
+            Task { await modelRoute.refresh() }
+          } label: {
+            Label(ModelRouteStandard.Strings.refreshStatus, systemImage: "arrow.clockwise")
+          }
+          .disabled(modelRoute.isSwitching)
+        }
+      }
+      .padding(.vertical, 2)
+    }
+  }
+
+  @ViewBuilder
+  private var switchButton: some View {
+    let state = snackSwitchTarget()
+    if let target = state.single, !state.ambiguous {
+      Button {
+        guard !modelRoute.isSwitching else { return }
+        routeSwitchTarget = target
+      } label: {
+        Label(
+          target == .official ? ModelRouteStandard.Strings.switchToOfficial
+                              : ModelRouteStandard.Strings.switchToGateway,
+          systemImage: "arrow.triangle.branch"
+        )
+      }
+      .disabled(modelRoute.isSwitching)
+    } else {
+      // Unknown route: offer an explicit choice.
+      HStack(spacing: 10) {
+        Button {
+          guard !modelRoute.isSwitching else { return }
+          routeSwitchTarget = .official
+        } label: {
+          Label(ModelRouteStandard.Strings.switchToOfficial, systemImage: "arrow.triangle.branch")
+        }
+        .disabled(modelRoute.isSwitching)
+        Button {
+          guard !modelRoute.isSwitching else { return }
+          routeSwitchTarget = .gateway
+        } label: {
+          Label(ModelRouteStandard.Strings.switchToGateway, systemImage: "arrow.triangle.branch")
+        }
+        .disabled(modelRoute.isSwitching)
+      }
+    }
+  }
+
+  /// The single switch button target. `.ambiguous` / `nil` when unknown and the
+  /// user must pick explicitly.
+  private func snackSwitchTarget() -> (single: ModelRouteStandard.Target?, ambiguous: Bool) {
+    guard let route = modelRoute.snapshot?.route else {
+      return (nil, true)
+    }
+    switch route {
+    case .official: return (.gateway, false)
+    case .gateway: return (.official, false)
+    case .unknown: return (nil, true)
+    }
+  }
+
+  private func routeLabel(_ route: ModelRouteStandard.Route) -> String {
+    switch route {
+    case .official: return ModelRouteStandard.Strings.routeOfficial
+    case .gateway: return ModelRouteStandard.Strings.routeGateway
+    case .unknown: return ModelRouteStandard.Strings.routeUnknown
+    }
+  }
+
+  private func routeBadgeColor(_ route: ModelRouteStandard.Route) -> Color {
+    switch route {
+    case .official: return .blue
+    case .gateway: return .green
+    case .unknown: return .gray
+    }
+  }
+
+  private func routeStatusRow(title: String, value: String, badge: ModelRouteStandard.Route? = nil) -> some View {
+    HStack(alignment: .firstTextBaseline) {
+      Text(title)
+        .font(.callout)
+        .foregroundStyle(.secondary)
+      Spacer()
+      if let badge {
+        Text(value)
+          .font(.callout.weight(.semibold))
+          .padding(.horizontal, 8)
+          .padding(.vertical, 2)
+          .background(routeBadgeColor(badge).opacity(0.15), in: Capsule())
+          .foregroundStyle(routeBadgeColor(badge))
+      } else {
+        Text(value)
+          .font(.callout.weight(.medium))
+          .textSelection(.enabled)
+      }
+    }
+  }
+
+  private func gatewayStatusRow(running: Bool) -> some View {
+    HStack(alignment: .firstTextBaseline) {
+      Text(ModelRouteStandard.Strings.gatewayStatusTitle)
+        .font(.callout)
+        .foregroundStyle(.secondary)
+      Spacer()
+      HStack(spacing: 5) {
+        Text(running ? "●" : "○")
+          .font(.callout)
+          .foregroundStyle(running ? Color.green : Color.secondary)
+        Text(running ? ModelRouteStandard.Strings.gatewayRunning
+                     : ModelRouteStandard.Strings.gatewayNotRunning)
+          .font(.callout.weight(.medium))
+      }
+    }
+  }
+
+  private func routeBanner(message: String, systemImage: String, color: Color, onDismiss: @escaping () -> Void) -> some View {
+    HStack(alignment: .top, spacing: 8) {
+      Image(systemName: systemImage)
+        .foregroundStyle(color)
+      Text(message)
+        .font(.callout)
+        .foregroundStyle(.primary)
+      Spacer()
+      Button {
+        onDismiss()
+      } label: {
+        Image(systemName: "xmark.circle.fill")
+          .foregroundStyle(.secondary)
+      }
+      .buttonStyle(.plain)
+    }
+    .padding(10)
+    .background(color.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+  }
+
+  private func routeErrorBanner(message: String) -> some View {
+    routeBanner(message: message, systemImage: "exclamationmark.triangle.fill", color: .red) {
+      modelRoute.dismissError()
+    }
+  }
+
   // MARK: - Add provider
 
+  @ViewBuilder
   private var addProviderSection: some View {
     Section {
       collapsibleHeader(
