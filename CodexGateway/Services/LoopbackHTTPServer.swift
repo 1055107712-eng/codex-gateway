@@ -10,6 +10,10 @@ struct HTTPRequest {
   let query: String
   let headers: [String: String]
   let body: Data
+  /// True when content-encoding was declared but the decoder could not produce a
+  /// decoded body (e.g. corrupt/unknown zstd). Lets the router return an explicit
+  /// decoder error instead of forwarding raw compressed bytes as if it were JSON.
+  let decodeFailed: Bool
   var isWebSocketUpgrade: Bool {
     (headers["upgrade"]?.lowercased() == "websocket") && headers["sec-websocket-key"] != nil
   }
@@ -268,13 +272,20 @@ final class LoopbackHTTPServer {
     let bodyStart = headerRange.upperBound
     let rawBody = data.subdata(in: bodyStart..<data.count)
     let body: Data
+    let decodeFailed: Bool
     switch HTTPRequestParser.extractBody(method: method, headers: headers, rawBody: rawBody, isComplete: isComplete) {
     case .needMoreData:
       return nil
     case .ready(let extracted):
-      body = HTTPBodyDecoder.decodeContentEncoding(extracted, headers: headers)
+      if let decoded = HTTPBodyDecoder.decodeContentEncoding(extracted, headers: headers) {
+        body = decoded
+        decodeFailed = false
+      } else {
+        body = Data()
+        decodeFailed = true
+      }
     }
-    return HTTPRequest(method: method, path: path, query: query, headers: headers, body: body)
+    return HTTPRequest(method: method, path: path, query: query, headers: headers, body: body, decodeFailed: decodeFailed)
   }
 }
 
@@ -309,9 +320,13 @@ enum HTTPRequestParser {
 }
 
 enum HTTPBodyDecoder {
-  static func decodeContentEncoding(_ body: Data, headers: [String: String]) -> Data {
+  /// Returns the decoded body, or `nil` when an explicitly declared content-encoding
+  /// could not be decoded (corrupt/unsupported payload). A missing/empty encoding
+  /// passes the body through unchanged.
+  static func decodeContentEncoding(_ body: Data, headers: [String: String]) -> Data? {
     let encoding = headers["content-encoding"]?.lowercased() ?? ""
     guard !encoding.isEmpty else {
+      // No declared encoding: auto-sniff zstd magic, otherwise pass through unchanged.
       if body.count >= 4, body[0] == 0x28, body[1] == 0xB5, body[2] == 0x2F, body[3] == 0xFD,
          let decoded = ZstdBridge.decompress(body) {
         return decoded
@@ -319,12 +334,14 @@ enum HTTPBodyDecoder {
       return body
     }
     if encoding.contains("gzip") || encoding.contains("x-gzip") {
-      return gunzip(body) ?? body
+      return gunzip(body)
     }
     if encoding.contains("zstd") || encoding.contains("x-zstd") {
-      return ZstdBridge.decompress(body) ?? body
+      return ZstdBridge.decompress(body)
     }
-    return body
+    // Unsupported declared encoding: treat as a decode-stage failure rather than
+    // silently forwarding bytes we cannot safely interpret as text.
+    return nil
   }
 
   static func gunzip(_ data: Data) -> Data? {

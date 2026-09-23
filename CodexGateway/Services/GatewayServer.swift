@@ -88,6 +88,16 @@ final class GatewayServer {
   }
 
   private func handleResponses(_ request: HTTPRequest, _ response: HTTPResponse) {
+    if request.decodeFailed {
+      GatewayLog.error(
+        "Body decode failed on \(request.path): bytes=\(request.body.count) " +
+        "cl=\(request.headers["content-length"] ?? "-") " +
+        "te=\(request.headers["transfer-encoding"] ?? "-") " +
+        "ce=\(request.headers["content-encoding"] ?? "-") (did not forward compressed bytes)"
+      )
+      json(response, ["error": "Request body decode failed"], status: 400)
+      return
+    }
     guard let body = parseJSON(request.body) else {
       let preview = String(data: request.body.prefix(160), encoding: .utf8) ?? "<binary>"
       GatewayLog.error(
