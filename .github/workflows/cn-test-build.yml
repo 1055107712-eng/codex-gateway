@@ -1,0 +1,170 @@
+name: CN Test Build
+
+# Builds the "CodexGateway CN Test" variant on a macOS runner.
+# Pipeline:
+#   1. Install/confirm libzstd (hard requirement — zstd regression must not SKIP)
+#   2. Run full unit test suite (with the 5 named test suites exercising zstd,
+#      request-body decoding, localization, model-route UI, and the route switcher)
+#   3. Build the CN Test .app with an isolated identity
+#      - App Name:    CodexGateway CN Test
+#      - Bundle ID:   com.rimusz.CodexGateway.CNTest
+#   4. Ad-hoc codesign the bundle (no Developer ID, no notarization)
+#   5. Zip and upload as an artifact
+#
+# Safety boundary: this workflow NEVER writes to /Applications/CodexGateway.app,
+# never pushes to any remote, and never creates a public GitHub repo.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/cn-test-route-switcher
+
+concurrency:
+  group: cn-test-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CN_TEST_APP_NAME: CodexGateway CN Test
+  CN_TEST_BUNDLE_ID: com.rimusz.CodexGateway.CNTest
+
+jobs:
+  build-cn-test:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Swift version
+        run: swift --version
+
+      # ------------------------------------------------------------------
+      # Step 1: Ensure libzstd is really available.
+      # The zstd regression tests must NOT be silently SKIPped as success.
+      # ------------------------------------------------------------------
+      - name: Install libzstd (zstd) via Homebrew
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Prefer the official brew formula "zstd"; if already present, the
+          # `brew install` is a no-op and the subsequent verification still
+          # passes.
+          if brew list --versions zstd >/dev/null 2>&1; then
+            echo "==> zstd already installed:"
+            brew list --versions zstd
+          else
+            echo "==> Installing zstd ..."
+            brew install zstd
+          fi
+          zstd --version
+
+      - name: Verify libzstd dylib is reachable from the ZstdBridge paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          # ZstdBridge / ZstdTestSupport look at these exact paths.
+          found=0
+          for p in /opt/homebrew/lib/libzstd.dylib /usr/local/lib/libzstd.dylib /usr/lib/libzstd.dylib; do
+            if [ -f "$p" ]; then
+              echo "==> libzstd found at $p"
+              found=1
+            fi
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "::error::libzstd dylib not found in any known path after install."
+            echo "ZstdBridge dlopen paths checked:"
+            echo "  /opt/homebrew/lib/libzstd.dylib"
+            echo "  /usr/local/lib/libzstd.dylib"
+            echo "  /usr/lib/libzstd.dylib"
+            # Show what homebrew actually installed so a maintainer can see it.
+            brew list zstd 2>/dev/null || true
+            exit 1
+          fi
+
+      # ------------------------------------------------------------------
+      # Step 2: Run the full test suite (with zstd present, no SKIP path).
+      # ------------------------------------------------------------------
+      - name: Run unit tests (libzstd required, no silent SKIP)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "==> Running 'make test' (zstd expected present; zstd tests must NOT skip) ..."
+          make test
+
+      # ------------------------------------------------------------------
+      # Step 3: Build the CN Test app with an isolated identity.
+      # build-macos-app.sh already supports --name and --bundle-id.
+      # The CN Test bundle id ends with .CNTest, so AppVariant.current will
+      # automatically resolve to .cnTest (productName "CodexGateway CN Test",
+      # bundle id com.rimusz.CodexGateway.CNTest) at runtime.
+      # ------------------------------------------------------------------
+      - name: Build CN Test app bundle (isolated identity)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Build unsigned (no SIGN_IDENTITY -> ad-hoc codesign inside the
+          # packaging script). Do not write anywhere under /Applications.
+          ./scripts/build-macos-app.sh \
+            --name "${{ env.CN_TEST_APP_NAME }}" \
+            --bundle-id "${{ env.CN_TEST_BUNDLE_ID }}"
+
+          # Sanity check: the .app exists and the executable is present.
+          test -d "dist/${{ env.CN_TEST_APP_NAME }}.app"
+          test -x "dist/${{ env.CN_TEST_APP_NAME }}.app/Contents/MacOS/CodexGateway"
+
+      # ------------------------------------------------------------------
+      # Step 4: Ad-hoc codesign the CN Test bundle (no Developer ID, no
+      # notarization).
+      # ------------------------------------------------------------------
+      - name: Ad-hoc codesign the CN Test bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Sign the executable and (for compatibility with older updaters) the
+          # legacy alias, then ad-hoc sign the whole bundle.
+          APP_BUNDLE="dist/${{ env.CN_TEST_APP_NAME }}.app"
+          BUNDLE_ID="${{ env.CN_TEST_BUNDLE_ID }}"
+          MACOS_DIR="$APP_BUNDLE/Contents/MacOS"
+
+          xattr -cr "$APP_BUNDLE" 2>/dev/null || true
+
+          for ex in CodexGateway CodexBar; do
+            if [ -f "$MACOS_DIR/$ex" ]; then
+              echo "==> Ad-hoc signing $MACOS_DIR/$ex"
+              codesign --force --sign - --identifier "$BUNDLE_ID" --timestamp=none "$MACOS_DIR/$ex"
+            fi
+          done
+
+          if [ -f "entitlements.plist" ]; then
+            echo "==> Ad-hoc signing app bundle with entitlements"
+            codesign --force --sign - --entitlements "entitlements.plist" --timestamp=none "$APP_BUNDLE"
+          else
+            echo "==> Ad-hoc signing app bundle (no entitlements)"
+            codesign --force --sign - --timestamp=none "$APP_BUNDLE"
+          fi
+
+          # Verify the signature.
+          codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
+          echo "==> Ad-hoc signature OK."
+
+      # ------------------------------------------------------------------
+      # Step 5: Zip and upload the CN Test app bundle as a CI artifact.
+      # ------------------------------------------------------------------
+      - name: Zip CN Test app bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP_NAME="CodexGateway-CN-Test.zip"
+          ditto -c -k --keepParent "dist/${{ env.CN_TEST_APP_NAME }}.app" "dist/$ZIP_NAME"
+          test -f "dist/$ZIP_NAME"
+          echo "==> ZIP at dist/$ZIP_NAME"
+
+      - name: Upload CN Test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CodexGateway-CN-Test-app
+          path: |
+            dist/CodexGateway-CN-Test.zip
+          if-no-files-found: error
