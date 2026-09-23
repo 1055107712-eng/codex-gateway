@@ -13,6 +13,25 @@ final class AppIdentityTests: XCTestCase {
     XCTAssertEqual(AppIdentity.legacyAppBundleName, "CodexBar.app")
   }
 
+  func testCNTestVariantIsolatedIdentity() {
+    XCTAssertEqual(AppVariant.official.productName, "CodexGateway")
+    XCTAssertEqual(AppVariant.cnTest.productName, "CodexGateway CN Test")
+    XCTAssertEqual(AppVariant.official.bundleIdentifier, "com.rimusz.CodexGateway")
+    XCTAssertEqual(AppVariant.cnTest.bundleIdentifier, "com.rimusz.CodexGateway.CNTest")
+    XCTAssertEqual(AppVariant.official.userDefaultsSuite, "com.rimusz.CodexGateway")
+    XCTAssertEqual(AppVariant.cnTest.userDefaultsSuite, "com.rimusz.CodexGateway.CNTest")
+    XCTAssertNotEqual(AppVariant.cnTest.userDefaultsSuite, AppVariant.official.userDefaultsSuite)
+
+    // testOverride lets a CLT-only `swift test` pick the CN variant on a host
+    // where Bundle.main carries no bundle-id indicator.
+    AppVariant.testOverride = .cnTest
+    defer { AppVariant.testOverride = nil }
+    XCTAssertEqual(AppIdentity.productName, "CodexGateway CN Test")
+    XCTAssertEqual(AppIdentity.bundleIdentifier, "com.rimusz.CodexGateway.CNTest")
+    XCTAssertEqual(AppIdentity.appBundleName, "CodexGateway CN Test.app")
+    XCTAssertEqual(AppIdentity.userDefaultsSuite, "com.rimusz.CodexGateway.CNTest")
+  }
+
   func testAppZipAssetNamesPreferNewThenLegacy() {
     XCTAssertEqual(
       AppIdentity.appZipAssetNames(tagName: "v0.2.0"),

@@ -1,17 +1,65 @@
 import AppKit
 import Foundation
 
+/// Build variants both produced from this same source tree.
+///
+/// The active identity is derived from the running bundle id (wired by
+/// `scripts/build-macos-app.sh --bundle-id`) so the exact same sources can emit
+/// either the production `CodexGateway` or an isolated `CodexGateway CN Test`.
+/// `AppVariant.testOverride` lets pure unit tests pick a variant on a host
+/// where `Bundle.main` carries no indicator (bare `SwiftPM test`, CLT-only).
+enum AppVariant: Equatable {
+  case official
+  case cnTest
+
+  /// Test seam — set by unit tests to choose a variant when `Bundle.main`
+  /// cannot reflect the intended build (e.g. bare `SwiftPM test`).
+  static var testOverride: AppVariant?
+  /// Env override so the CI CN-Test build can force the variant explicitly.
+  static let envOverrideKey = "CODEXGATEWAY_VARIANT"
+
+  static var current: AppVariant {
+    if let override = testOverride { return override }
+    if let env = ProcessInfo.processInfo.environment[envOverrideKey], env == "cn-test" {
+      return .cnTest
+    }
+    if let bid = Bundle.main.bundleIdentifier, bid.hasSuffix(".CNTest") {
+      return .cnTest
+    }
+    return .official
+  }
+
+  var productName: String {
+    switch self {
+    case .official: return "CodexGateway"
+    case .cnTest: return "CodexGateway CN Test"
+    }
+  }
+  var bundleIdentifier: String {
+    switch self {
+    case .official: return "com.rimusz.CodexGateway"
+    case .cnTest: return "com.rimusz.CodexGateway.CNTest"
+    }
+  }
+  /// Per-variant `UserDefaults` suite. Because each variant ships a distinct
+  /// bundle id this already differs; exposing it keeps identity code explicit
+  /// and lets callers depend on a named suite instead of `.standard`.
+  var userDefaultsSuite: String { bundleIdentifier }
+}
+
 /// Product naming and upgrade-safe identity for CodexGateway.
+///
+/// Every value that must be unique per install derives from `AppVariant.current`.
+/// Values shared across variants (the `codexgateway` provider id inside
+/// `~/.codex/config.toml`, managed markers, the upgrade helper name) stay fixed
+/// because both variants intentionally operate on the SAME Codex config.
 enum AppIdentity {
-  static let productName = "CodexGateway"
   static let legacyProductName = "CodexBar"
-  static let bundleIdentifier = "com.rimusz.CodexGateway"
   static let legacyBundleIdentifier = "com.rimusz.CodexBar"
-  /// Provider id written into `~/.codex/config.toml`.
+  /// Provider id written into `~/.codex/config.toml` — SHARED by both variants.
   static let codexProviderID = "codexgateway"
   static let legacyCodexProviderID = "codexbar"
   static let legacyAppBundleName = "\(legacyProductName).app"
-  static let appBundleName = "\(productName).app"
   static let installHelperResourceName = "codexgateway-install-update"
   static let legacyInstallHelperResourceName = "codexbar-install-update"
 
@@ -19,6 +67,16 @@ enum AppIdentity {
   static let managedEnd = "# <<< codexgateway managed <<<"
   static let legacyManagedStart = "# >>> codexbar managed >>>"
   static let legacyManagedEnd = "# <<< codexbar managed <<<"
+
+  // --- Per-variant identity (derived from the running bundle id) ---
+
+  /// Display / product name, e.g. `CodexGateway` or `CodexGateway CN Test`.
+  static var productName: String { AppVariant.current.productName }
+  /// Bundle identifier, e.g. `com.rimusz.CodexGateway` or `.CNTest`.
+  static var bundleIdentifier: String { AppVariant.current.bundleIdentifier }
+  /// `UserDefaults` suite name unique to this variant.
+  static var userDefaultsSuite: String { AppVariant.current.userDefaultsSuite }
+  static var appBundleName: String { "\(productName).app" }
 
   /// Preferred + legacy GitHub release zip names for a tag (`v1.2.3`).
   static func appZipAssetNames(tagName: String) -> [String] {

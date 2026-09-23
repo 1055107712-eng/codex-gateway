@@ -3,15 +3,36 @@ set -euo pipefail
 
 # Build a lightweight CodexGateway.app bundle for local development.
 # Uses the same bundle identifier as the packaged app.
+#
+# Usage:
+#   ./scripts/build-dev-app.sh [--name NAME] [--bundle-id ID]
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="CodexGateway"
 EXECUTABLE_NAME="CodexGateway"
+BUNDLE_ID="com.rimusz.CodexGateway"
 APP_VERSION="$(tr -d '[:space:]' < "$ROOT_DIR/VERSION")"
 BUILD_DIR="$ROOT_DIR/.build"
 BUILD_CONFIG="${BUILD_CONFIG:-release}"
 BINARY_DIR="$BUILD_DIR/$BUILD_CONFIG"
 APP_BUNDLE="$BUILD_DIR/${APP_NAME}.app"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --name)
+            APP_NAME="$2"
+            shift 2
+            ;;
+        --bundle-id|--bundle-identifier)
+            BUNDLE_ID="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown option: $1 (expected --name / --bundle-id)" >&2
+            exit 1
+            ;;
+    esac
+done
 
 if [ ! -x "$BINARY_DIR/$EXECUTABLE_NAME" ]; then
     echo "Missing $BUILD_CONFIG binary at $BINARY_DIR/$EXECUTABLE_NAME. Run 'make build' or 'make build-debug' first." >&2
@@ -90,8 +111,10 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << EOF
     <key>CFBundleExecutable</key>
     <string>$EXECUTABLE_NAME</string>
     <key>CFBundleIdentifier</key>
-    <string>com.rimusz.CodexGateway</string>
+    <string>$BUNDLE_ID</string>
     <key>CFBundleName</key>
+    <string>$APP_NAME</string>
+    <key>CFBundleDisplayName</key>
     <string>$APP_NAME</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
@@ -107,5 +130,5 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << EOF
 </plist>
 EOF
 
-"$SCRIPT_DIR/codesign-app-bundle.sh" "$APP_BUNDLE"
+"$SCRIPT_DIR/codesign-app-bundle.sh" "$APP_BUNDLE" "-" "$BUNDLE_ID"
 echo "Dev app ready: $APP_BUNDLE"

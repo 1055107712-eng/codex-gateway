@@ -7,12 +7,14 @@ set -euo pipefail
 # Usage:
 #   ./scripts/build-macos-app.sh
 #   ./scripts/build-macos-app.sh --sign "Developer ID Application: Your Name (TEAMID)"
+#   ./scripts/build-macos-app.sh --name "CodexGateway CN Test" --bundle-id "com.rimusz.CodexGateway.CNTest"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
 APP_NAME="CodexGateway"
 EXECUTABLE_NAME="CodexGateway"
+BUNDLE_ID="com.rimusz.CodexGateway"
 APP_VERSION="$(tr -d '[:space:]' < "$ROOT_DIR/VERSION")"
 
 BUILD_DIR="$ROOT_DIR/.build"
@@ -31,8 +33,12 @@ while [[ $# -gt 0 ]]; do
             APP_NAME="$2"
             shift 2
             ;;
+        --bundle-id|--bundle-identifier)
+            BUNDLE_ID="$2"
+            shift 2
+            ;;
         -h|--help)
-            echo "Usage: $0 [--sign IDENTITY] [--name NAME]"
+            echo "Usage: $0 [--sign IDENTITY] [--name NAME] [--bundle-id ID]"
             exit 0
             ;;
         *)
@@ -43,6 +49,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo "==> Building ${APP_NAME} macOS app..."
+echo "    bundle id: ${BUNDLE_ID}"
 
 mkdir -p "$DIST_DIR"
 mkdir -p "$BUILD_DIR"
@@ -148,8 +155,10 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << EOF
     <key>CFBundleExecutable</key>
     <string>$EXECUTABLE_NAME</string>
     <key>CFBundleIdentifier</key>
-    <string>com.rimusz.CodexGateway</string>
+    <string>$BUNDLE_ID</string>
     <key>CFBundleName</key>
+    <string>$APP_NAME</string>
+    <key>CFBundleDisplayName</key>
     <string>$APP_NAME</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
@@ -171,9 +180,9 @@ chmod +x "$SCRIPT_DIR/bundle-cursor-bridge.sh"
 "$SCRIPT_DIR/bundle-cursor-bridge.sh" "$APP_BUNDLE/Contents/Resources"
 
 if [ -n "$SIGN_IDENTITY" ]; then
-    "$SCRIPT_DIR/codesign-app-bundle.sh" "$APP_BUNDLE" "$SIGN_IDENTITY"
+    "$SCRIPT_DIR/codesign-app-bundle.sh" "$APP_BUNDLE" "$SIGN_IDENTITY" "$BUNDLE_ID"
 else
-    "$SCRIPT_DIR/codesign-app-bundle.sh" "$APP_BUNDLE"
+    "$SCRIPT_DIR/codesign-app-bundle.sh" "$APP_BUNDLE" "-" "$BUNDLE_ID"
 fi
 
 echo "==> App bundle ready: $APP_BUNDLE"

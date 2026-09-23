@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Sign CodexGateway.app for consistent ad-hoc or Developer ID signing.
-# Usage: codesign-app-bundle.sh /path/to/CodexGateway.app [signing_identity]
+# Usage: codesign-app-bundle.sh /path/to/CodexGateway.app [signing_identity|-] [bundle_id]
 
 set -euo pipefail
 
 APP_BUNDLE="${1:?app bundle path required}"
 IDENTITY="${2:--}"
-BUNDLE_ID="com.rimusz.CodexGateway"
+BUNDLE_ID="${3:-com.rimusz.CodexGateway}"
 MACOS_DIR="$APP_BUNDLE/Contents/MacOS"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENTITLEMENTS="$ROOT_DIR/entitlements.plist"
