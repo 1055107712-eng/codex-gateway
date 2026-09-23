@@ -48,20 +48,22 @@ struct SettingsView: View {
   @State private var cursorBridgeStatus = CursorBridgeRuntime.status
   @StateObject private var modelRoute = ModelRouteSettingsViewModel()
   @State private var routeSwitchTarget: ModelRouteStandard.Target?
+  @ObservedObject private var l10n = L10n.shared
 
   var body: some View {
     Form {
       Section {
         VStack(alignment: .leading, spacing: 6) {
-          Text("Providers & Models")
+          Text(L10n.shared.text(.providersAndModels))
             .font(.title3.weight(.semibold))
-          Text("Manage OpenAI-compatible providers and catalog models for Codex Desktop.")
+          Text(L10n.shared.text(.providersAndModelsSubtitle))
             .font(.callout)
             .foregroundStyle(.secondary)
         }
         .padding(.vertical, 2)
       }
 
+      languageSection
       signInHintSection
       modelRouteSection
       addProviderSection
@@ -71,7 +73,7 @@ struct SettingsView: View {
     }
     .formStyle(.grouped)
     .frame(minWidth: 620, minHeight: 520)
-    .navigationTitle("CodexGateway Settings")
+    .navigationTitle(L10n.shared.text(.settingsNavigation))
     .toolbar { toolbar }
     .onAppear {
       store.reload()
@@ -140,15 +142,15 @@ struct SettingsView: View {
         : "Writes your current CodexGateway providers and models into Codex's config, then restarts Codex.")
     }
     .confirmationDialog(
-      routeSwitchTarget.map { "Switch model route?" } ?? "",
+      routeSwitchTarget.map { _ in L10n.shared.text(.confirmSwitchDialogTitle) } ?? "",
       isPresented: routeSwitchConfirmBinding,
       titleVisibility: .visible
     ) {
-      Button("Switch") {
-        guard let target = routeSwitchTarget else { return }
-        Task { await performRouteSwitch(target) }
+      Button(L10n.shared.text(.apply)) {
+        guard let routeSwitchTarget else { return }
+        Task { await performRouteSwitch(routeSwitchTarget) }
       }
-      Button("Cancel", role: .cancel) { routeSwitchTarget = nil }
+      Button(L10n.shared.text(.cancel), role: .cancel) { routeSwitchTarget = nil }
     } message: {
       Text(routeSwitchTarget.map(ModelRouteStandard.Strings.confirmSwitch) ?? "")
     }
@@ -163,7 +165,7 @@ struct SettingsView: View {
       Button {
         DoctorWindowController.shared.show()
       } label: {
-        Label("Doctor", systemImage: "stethoscope")
+        Label(L10n.shared.text(.doctor), systemImage: "stethoscope")
       }
       .help("Check gateway, Codex config, Node.js, and Cursor / Grok setup")
     }
@@ -171,10 +173,30 @@ struct SettingsView: View {
       Button {
         store.reload()
       } label: {
-        Label("Refresh", systemImage: "arrow.clockwise")
+        Label(L10n.shared.text(.refresh), systemImage: "arrow.clockwise")
       }
       .help("Reload providers and models from disk")
     }
+  }
+
+  /// Language selection. Switching updates `L10n.shared` immediately; SwiftUI
+  /// re-renders this window (via `@ObservedObject`) and AppKit rebuilds the
+  /// status-bar menu on the `L10n.didChangeNotification`.
+  private var languageSection: some View {
+    Section {
+      Picker(L10n.shared.text(.language), selection: languageBinding) {
+        ForEach(AppLanguage.allCases, id: \.self) { language in
+          Text(language.displayName).tag(language)
+        }
+      }
+    }
+  }
+
+  private var languageBinding: Binding<AppLanguage> {
+    Binding(
+      get: { l10n.language },
+      set: { l10n.setLanguage($0) }
+    )
   }
 
   @ViewBuilder
@@ -469,7 +491,7 @@ struct SettingsView: View {
   private var addProviderSection: some View {
     Section {
       collapsibleHeader(
-        title: "Add Provider",
+        title: L10n.shared.text(.addProvider),
         systemImage: "plus.circle",
         isExpanded: $isAddProviderSectionExpanded
       )
@@ -555,7 +577,7 @@ struct SettingsView: View {
   private var providersSection: some View {
     Section {
       collapsibleHeader(
-        title: "Providers",
+        title: L10n.shared.text(.providers),
         systemImage: "server.rack",
         count: store.usableProviders.count,
         isExpanded: $isProvidersSectionExpanded
@@ -798,7 +820,7 @@ struct SettingsView: View {
   private var modelsSection: some View {
     Section {
       collapsibleHeader(
-        title: "Models",
+        title: L10n.shared.text(.models),
         systemImage: "cpu",
         count: store.models.count,
         isExpanded: $isModelsSectionExpanded

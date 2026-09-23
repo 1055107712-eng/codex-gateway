@@ -74,7 +74,7 @@ enum OpenAtLoginToggle {
 }
 
 enum OpenAtLoginMenuCopy {
-  static let title = "Open at Login"
+  static var title: String { L10n.shared.text(.sbOpenAtLogin) }
 
   static let approvalTitle = "Allow CodexGateway in Login Items"
   static let approvalMessage =

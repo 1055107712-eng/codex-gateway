@@ -8,17 +8,17 @@ enum AppStatus {
 
     var accessibilityLabel: String {
         switch self {
-        case .idle: return "Ready"
-        case .loading: return "Loading"
-        case .error: return "Error"
-        case .offline: return "Offline"
+        case .idle: return L10n.shared.text(.sbReady)
+        case .loading: return L10n.shared.text(.sbLoading)
+        case .error: return L10n.shared.text(.sbError)
+        case .offline: return L10n.shared.text(.sbOffline)
         }
     }
 }
 
 enum RestartCodexConfirmation {
-    static let title = "Restart Codex?"
-    static let message = "This will restart Codex Desktop so it can reload provider and model configuration."
+    static var title: String { L10n.shared.text(.restartCodexDialogTitle) }
+    static var message: String { L10n.shared.text(.restartCodexDialogMessage) }
 
     static func confirm() -> Bool {
         let shouldRestoreAccessory = NSApp.activationPolicy() == .accessory
@@ -31,8 +31,8 @@ enum RestartCodexConfirmation {
         alert.messageText = title
         alert.informativeText = message
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "Restart Codex")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: L10n.shared.text(.restartButton))
+        alert.addButton(withTitle: L10n.shared.text(.cancel))
         alert.window.level = .modalPanel
         let confirmed = alert.runModal() == .alertFirstButtonReturn
 
@@ -45,19 +45,21 @@ enum RestartCodexConfirmation {
 }
 
 enum StatusBarMenuCopy {
-  static let doctorTitle = "Doctor…"
+  static var doctorTitle: String { L10n.shared.text(.sbDoctor) }
 
   static func updateMenuTitle(hasActionableUpdate: Bool) -> String {
-    hasActionableUpdate ? "Upgrade Available…" : "Check for Updates…"
+    hasActionableUpdate ? L10n.shared.text(.sbUpgradeAvailable) : L10n.shared.text(.sbCheckForUpdates)
   }
+
+  static var checkingForUpdates: String { L10n.shared.text(.sbCheckingForUpdates) }
 
   /// Short label describing the gateway's health for the menu.
   static func gatewayStateLabel(_ status: AppStatus) -> String {
     switch status {
-    case .idle: return "Running"
-    case .loading: return "Starting…"
-    case .error: return "Error"
-    case .offline: return "Offline"
+    case .idle: return L10n.shared.text(.sbRunning)
+    case .loading: return L10n.shared.text(.sbStarting)
+    case .error: return L10n.shared.text(.sbError)
+    case .offline: return L10n.shared.text(.sbOffline)
     }
   }
 
@@ -82,11 +84,11 @@ enum StatusBarMenuCopy {
     case .running:
       return "Cursor Bridge · \(host):\(port)"
     case .starting:
-      return "Cursor Bridge · Starting…"
+      return "Cursor Bridge · \(L10n.shared.text(.sbCursorBridgeStarting))"
     case .stopped:
-      return "Cursor Bridge · Stopped"
+      return "Cursor Bridge · \(L10n.shared.text(.sbCursorBridgeStopped))"
     case .failed:
-      return "Cursor Bridge · Error"
+      return "Cursor Bridge · \(L10n.shared.text(.sbCursorBridgeError))"
     }
   }
 }
@@ -154,10 +156,34 @@ class StatusBarController: NSObject, NSMenuDelegate {
             object: nil
         )
 
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleLanguageChanged),
+            name: L10n.didChangeNotification,
+            object: nil
+        )
+
         DispatchQueue.main.async { [weak self] in
             self?.refreshUpdateMenuItem()
             self?.refreshCursorBridgeMenuItem()
         }
+    }
+
+    /// Rebuild the whole status-bar menu when the UI language changes so every
+    /// title reflects the new language immediately (no restart required).
+    @objc private func handleLanguageChanged() {
+        DispatchQueue.main.async { [weak self] in
+            self?.rebuildMenu()
+        }
+    }
+
+    private func rebuildMenu() {
+        menu.removeAllItems()
+        setupMenu()
+        updateIcon(for: currentStatus)
+        refreshUpdateMenuItem()
+        refreshCursorBridgeMenuItem()
+        refreshOpenAtLoginMenuItem()
     }
 
     deinit {
@@ -287,7 +313,7 @@ class StatusBarController: NSObject, NSMenuDelegate {
 
     menu.addItem(.separator())
 
-    let settingsItem = NSMenuItem(title: "Settings", action: #selector(openSettings), keyEquivalent: ",")
+    let settingsItem = NSMenuItem(title: L10n.shared.text(.sbSettings), action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
 
@@ -332,14 +358,14 @@ class StatusBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        let restartItem = NSMenuItem(title: "Restart Codex", action: #selector(restartCodex), keyEquivalent: "r")
+        let restartItem = NSMenuItem(title: L10n.shared.text(.sbRestartCodex), action: #selector(restartCodex), keyEquivalent: "r")
         restartItem.target = self
         menu.addItem(restartItem)
 
         menu.addItem(.separator())
 
         let aboutItem = NSMenuItem(
-          title: "About \(AppIdentity.productName)",
+          title: L10n.shared.text(.sbAbout).replacingOccurrences(of: "{name}", with: AppIdentity.productName),
           action: #selector(openAbout),
           keyEquivalent: ""
         )
@@ -348,13 +374,13 @@ class StatusBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        let quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: L10n.shared.text(.sbQuit), action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
     }
 
     @objc private func checkForUpdates() {
-        updateCheckItem?.title = "Checking for Updates…"
+        updateCheckItem?.title = StatusBarMenuCopy.checkingForUpdates
         updateCheckItem?.isEnabled = false
 
         Task { @MainActor [weak self] in

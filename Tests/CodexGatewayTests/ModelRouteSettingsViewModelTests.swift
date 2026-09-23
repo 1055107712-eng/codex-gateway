@@ -156,7 +156,8 @@ final class ModelRouteSettingsViewModelTests: XCTestCase {
     let vm = makeVM()
     await vm.switchToOfficial()
     XCTAssertNotNil(vm.errorMessage)
-    XCTAssertTrue(vm.errorMessage?.contains("Could not modify Codex config") == true)
+    // Message is now localized; compare against the current UI-language prefix.
+    XCTAssertTrue(vm.errorMessage?.hasPrefix(L10n.shared.text(.failurePrefix)) == true)
     XCTAssertNil(vm.successMessage)
   }
 

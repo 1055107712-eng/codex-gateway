@@ -20,7 +20,10 @@ let package = Package(
                 "Resources/CursorBridge",
             ],
             resources: [
-                .process("Resources/Assets.xcassets")
+                .process("Resources/Assets.xcassets"),
+                // Apple-standard localization bundles mirrored from L10nTable.
+                .process("Resources/en.lproj"),
+                .process("Resources/zh-Hans.lproj"),
             ]
         ),
         .testTarget(

@@ -47,53 +47,50 @@ enum ModelRouteStandard {
     )
   }
 
-  /// Centralized copy so Phase 4 (localization) can swap strings without
-  /// touching views. The rest of the app is English today, so these match it.
+  /// Centralized copy so views need not reach into L10n directly. Every string
+  /// delegates to the single `L10nTable` source (Phase 4) — there is no second
+  /// translation table here, so switching the UI language updates this section
+  /// automatically through `L10n.shared`.
   enum Strings {
-    static let sectionTitle = "Model Route"
-    static let sectionSubtitle = "Route Codex through OpenAI or your local CodexGateway."
+    static var sectionTitle: String { L10n.shared.text(.modelRoute) }
+    static var sectionSubtitle: String { L10n.shared.text(.modelRouteSubtitle) }
 
-    static let currentRouteTitle = "Current route"
-    static let routeOfficial = "OpenAI official"
-    static let routeGateway = "CodexGateway"
-    static let routeUnknown = "Unknown"
+    static var currentRouteTitle: String { L10n.shared.text(.currentRoute) }
+    static var routeOfficial: String { L10n.shared.text(.routeOfficial) }
+    static var routeGateway: String { L10n.shared.text(.routeGateway) }
+    static var routeUnknown: String { L10n.shared.text(.routeUnknown) }
 
-    static let currentModelTitle = "Current model"
-    static let modelProviderTitle = "model_provider"
-    static let gatewayAddressTitle = "Gateway address"
-    static let gatewayStatusTitle = "Gateway status"
-    static let gatewayRunning = "Running"
-    static let gatewayNotRunning = "Not running"
+    static var currentModelTitle: String { L10n.shared.text(.currentModel) }
+    static var modelProviderTitle: String { L10n.shared.text(.modelProvider) }
+    static var gatewayAddressTitle: String { L10n.shared.text(.gatewayAddress) }
+    static var gatewayStatusTitle: String { L10n.shared.text(.gatewayStatus) }
+    static var gatewayRunning: String { L10n.shared.text(.running) }
+    static var gatewayNotRunning: String { L10n.shared.text(.notRunning) }
 
-    static let officialModelTitle = "Official model"
-    static let officialModelHelp = "Used when switching to OpenAI. Saving here does not switch the route."
+    static var officialModelTitle: String { L10n.shared.text(.officialModel) }
+    static var officialModelHelp: String { L10n.shared.text(.officialModelHelp) }
 
-    static let switchToOfficial = "Switch to Official GPT"
-    static let switchToGateway = "Switch back to CodexGateway"
-    static let refreshStatus = "Refresh status"
+    static var switchToOfficial: String { L10n.shared.text(.switchToOfficial) }
+    static var switchToGateway: String { L10n.shared.text(.switchToGateway) }
+    static var refreshStatus: String { L10n.shared.text(.refreshStatus) }
 
     static func confirmSwitch(_ target: Target) -> String {
       switch target {
-      case .official:
-        return "This will change Codex's model route and automatically create a backup of config.toml."
-      case .gateway:
-        return "This will restore the CodexGateway model route and automatically create a backup of config.toml."
+      case .official: return L10n.shared.text(.confirmSwitchOpenAI)
+      case .gateway: return L10n.shared.text(.confirmSwitchGateway)
       }
     }
 
     static func success(_ route: Route) -> String {
       switch route {
-      case .official:
-        return "Switched to OpenAI official.\nPlease restart Codex for the change to take full effect."
-      case .gateway:
-        return "Switched to CodexGateway.\nPlease restart Codex for the change to take full effect."
-      case .unknown:
-        return ""
+      case .official: return L10n.shared.text(.successOpenAI)
+      case .gateway: return L10n.shared.text(.successGateway)
+      case .unknown: return ""
       }
     }
 
-    static let failurePrefix = "Could not modify Codex config."
-    static let failureRolledBack = "Could not modify Codex config. The original config was restored."
-    static let loading = "Reading route…"
+    static var failurePrefix: String { L10n.shared.text(.failurePrefix) }
+    static var failureRolledBack: String { L10n.shared.text(.failurePrefix) }
+    static var loading: String { L10n.shared.text(.loadingRoute) }
   }
 }
